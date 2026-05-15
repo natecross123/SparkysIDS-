@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+pydantic
+mysql-connector-python
+numpy
+pandas
+scikit-learn
+randomforest
+joblib
+requests
+redis
+kafka-python
+python-dateutil
+tqdm
+tensorflow
