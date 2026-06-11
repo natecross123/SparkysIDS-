@@ -12,17 +12,32 @@ FlowKey = Tuple[str, str, int, int, str]
 
 @dataclass
 class FlowStats:
-    """State tracked per 5-tuple flow for near-real-time decisions."""
+    """State tracked per 5-tuple flow for near-real-time decisions.
+    
+    EXTENDED VERSION - Tracks all fields needed for XGBoost model:
+    - dur, proto, dir, state, stos, dtos, tot_pkts, tot_bytes, src_bytes
+    """
 
     key: FlowKey
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
     packet_count: int = 0
     byte_total: int = 0
+    src_bytes: int = 0  # ← NEW: Bytes from source IP
+    dst_bytes: int = 0  # ← NEW: Bytes to destination IP
     packet_sizes: List[int] = field(default_factory=list)
     push_count: int = 0
     timestamps: List[float] = field(default_factory=list)
     dns_count: int = 0
+    
+    # ← NEW: TCP-specific tracking (for XGBoost features)
+    tcp_state: str = "-"  # TCP state string (for 'state' feature)
+    src_tos: int = 0      # Source ToS field (for 'stos' feature)
+    dst_tos: int = 0      # Destination ToS field (for 'dtos' feature)
+    syn_count: int = 0
+    ack_count: int = 0
+    fin_count: int = 0
+    rst_count: int = 0
 
     def update(self, pkt: Packet, ts: Optional[float] = None) -> None:
         now = ts if ts is not None else float(getattr(pkt, "time", time.time()))
@@ -36,8 +51,45 @@ class FlowStats:
         self.packet_sizes.append(size)
         self.timestamps.append(now)
 
-        if TCP in pkt and pkt[TCP].flags & 0x08:
-            self.push_count += 1
+        # ← NEW: Track directional bytes
+        src, dst, sport, dport, proto = self.key
+        if IP in pkt:
+            ip_layer = pkt[IP]
+            # If packet originates from source IP, count as src bytes
+            if ip_layer.src == src:
+                self.src_bytes += size
+            else:
+                self.dst_bytes += size
+            
+            # ← NEW: Track ToS fields
+            if ip_layer.src == src:
+                self.src_tos = ip_layer.tos
+            else:
+                self.dst_tos = ip_layer.tos
+
+        # ← NEW: TCP flag tracking
+        if TCP in pkt:
+            flags = pkt[TCP].flags
+            if flags & 0x02:  # SYN
+                self.syn_count += 1
+            if flags & 0x10:  # ACK
+                self.ack_count += 1
+            if flags & 0x01:  # FIN
+                self.fin_count += 1
+            if flags & 0x04:  # RST
+                self.rst_count += 1
+            if flags & 0x08:  # PUSH
+                self.push_count += 1
+            
+            # ← NEW: Track TCP state (simplified, but good enough)
+            if self.syn_count > 0 and self.ack_count > 0:
+                self.tcp_state = "ESTABLISHED"
+            elif self.syn_count > 0:
+                self.tcp_state = "SYN_SENT"
+            elif self.fin_count > 0:
+                self.tcp_state = "FIN_WAIT"
+            elif self.rst_count > 0:
+                self.tcp_state = "CLOSED"
 
         if DNS in pkt:
             self.dns_count += 1
@@ -250,6 +302,8 @@ class BotnetRuleEngine:
             "threshold": float(threshold),
             "packet_count": float(flow.packet_count),
             "byte_total": float(flow.byte_total),
+            "src_bytes": float(flow.src_bytes),  # ← NEW
+            "dst_bytes": float(flow.dst_bytes),  # ← NEW
             "avg_bytes": round(flow.avg_bytes, 3),
             "var_bytes": round(flow.var_bytes, 3),
             "std_bytes": round(flow.std_bytes, 3),
@@ -263,6 +317,11 @@ class BotnetRuleEngine:
             "dport": float(dport),
             "proto": 1.0 if proto == "TCP" else 2.0 if proto == "UDP" else 3.0 if proto == "DNS" else 0.0,
             "reason_count": float(len(reasons)),
+            "tcp_state": flow.tcp_state,  # ← NEW
+            "src_tos": float(flow.src_tos),  # ← NEW
+            "dst_tos": float(flow.dst_tos),  # ← NEW
+            "syn_count": float(flow.syn_count),  # ← NEW
+            "ack_count": float(flow.ack_count),  # ← NEW
         }
 
 
@@ -282,4 +341,3 @@ def run_live_capture(interface: str = "eth0", timeout: int = 30) -> List[Tuple[F
     sniff(prn=on_packet, store=False, iface=interface, timeout=timeout)
     decisions.extend(engine.flush_expired())
     return decisions
-

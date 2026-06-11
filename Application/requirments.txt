@@ -1,0 +1,7 @@
+scapy
+xgboost
+pandas
+scikit-learn
+numpy
+scipy
+ 
