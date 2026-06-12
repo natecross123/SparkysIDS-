@@ -1,5 +1,3 @@
-
-
 import argparse
 import json
 import logging
@@ -30,7 +28,7 @@ class SparkysIDS:
         self.config = config
         self.rule_engine: Optional[BotnetRuleEngine] = None
         self.ml_model: Optional[xgb.Booster] = None
-      ##  self.fusion_engine: Optional[DecisionFusionEngine] = None
+        self.fusion_engine: Optional[DecisionFusionEngine] = None  # ✅ FIXED: Uncommented
         
         # Results storage
         self.decisions: List[FinalDecision] = []
@@ -98,7 +96,7 @@ class SparkysIDS:
                     self.logger.warning("   [dur, proto, dir, state, stos, dtos, tot_pkts, tot_bytes, src_bytes]")
 
             # Fusion engine
-           ## self.fusion_engine = DecisionFusionEngine(weights=self.config.fusion_weights)
+            self.fusion_engine = DecisionFusionEngine(weights=self.config.fusion_weights)  # ✅ FIXED: Uncommented
             self.logger.info(f"Fusion engine ready (rule: {self.config.fusion_weights.rule_weight:.0%}, "
                            f"ml: {self.config.fusion_weights.ml_weight:.0%})")
 
@@ -162,7 +160,7 @@ class SparkysIDS:
         )
 
         # Fusion
-        final_decision = self.fusion_engine.fuse(rule_decision, ml_decision, flow_metadata)
+        final_decision = self.fusion_engine.fuse(rule_decision, ml_decision, flow_metadata)  # ✅ NOW WORKS!
         self.decisions.append(final_decision)
 
         # Track alerts
@@ -363,5 +361,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    
